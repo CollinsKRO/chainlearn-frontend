@@ -4,7 +4,7 @@ import { useErrorStore } from "@/store/error-store";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api";
 
-const REQUEST_TIMEOUT_MS = 15000;
+const REQUEST_TIMEOUT_MS = 30_000;
 const RETRY_BASE_DELAY_MS = 1000;
 const MAX_RETRIES = 3;
 
@@ -151,7 +151,8 @@ class ApiClient {
     url: string,
     init: RequestInit,
     retries: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeout: number = REQUEST_TIMEOUT_MS
   ): Promise<Response> {
     for (let attempt = 0; ; attempt++) {
       if (signal?.aborted) {
@@ -159,7 +160,7 @@ class ApiClient {
       }
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
       const onExternalAbort = () => controller.abort();
       signal?.addEventListener("abort", onExternalAbort);
 
@@ -248,7 +249,7 @@ class ApiClient {
     path: string,
     jwt?: string,
     signal?: AbortSignal,
-    options?: { bypassCache?: boolean }
+    options?: { bypassCache?: boolean; timeout?: number }
   ): Promise<ApiResponse<T>> {
     const url = `${this.baseUrl}${path}`;
     const key = this.cacheKey(url, jwt);
@@ -267,7 +268,7 @@ class ApiClient {
     // A `bypassCache` read is deliberately never shared: the caller wants its
     // own fresh round-trip and owns cancellation directly.
     if (options?.bypassCache) {
-      return this.executeGet<T>(url, key, jwt, true, signal);
+      return this.executeGet<T>(url, key, jwt, true, signal, options?.timeout);
     }
 
     let entry = inFlightGets.get(key);
@@ -277,7 +278,7 @@ class ApiClient {
         controller,
         refs: 0,
         settled: false,
-        promise: this.executeGet<T>(url, key, jwt, false, controller.signal),
+        promise: this.executeGet<T>(url, key, jwt, false, controller.signal, options?.timeout),
       };
       const settle = () => {
         created.settled = true;
@@ -307,14 +308,16 @@ class ApiClient {
     key: string,
     jwt: string | undefined,
     bypassCache: boolean,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeout?: number
   ): Promise<ApiResponse<T>> {
     try {
       const response = await this.fetchWithRetry(
         url,
         { method: "GET", headers: this.getHeaders(jwt) },
         MAX_RETRIES,
-        signal
+        signal,
+        timeout
       );
       const data = await this.handleResponse<ApiResponse<T>>(response);
       if (!bypassCache) {
@@ -333,7 +336,8 @@ class ApiClient {
     path: string,
     body: unknown,
     jwt?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeout?: number
   ): Promise<ApiResponse<T>> {
     try {
       const response = await this.fetchWithRetry(
@@ -344,7 +348,8 @@ class ApiClient {
           body: JSON.stringify(body),
         },
         0,
-        signal
+        signal,
+        timeout
       );
       const data = await this.handleResponse<ApiResponse<T>>(response);
       this.invalidateCache();
@@ -361,7 +366,8 @@ class ApiClient {
     path: string,
     body: unknown,
     jwt?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeout?: number
   ): Promise<ApiResponse<T>> {
     try {
       const response = await this.fetchWithRetry(
@@ -372,7 +378,8 @@ class ApiClient {
           body: JSON.stringify(body),
         },
         0,
-        signal
+        signal,
+        timeout
       );
       const data = await this.handleResponse<ApiResponse<T>>(response);
       this.invalidateCache();
@@ -388,14 +395,16 @@ class ApiClient {
   async delete<T>(
     path: string,
     jwt?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeout?: number
   ): Promise<ApiResponse<T>> {
     try {
       const response = await this.fetchWithRetry(
         `${this.baseUrl}${path}`,
         { method: "DELETE", headers: this.getHeaders(jwt) },
         0,
-        signal
+        signal,
+        timeout
       );
       const data = await this.handleResponse<ApiResponse<T>>(response);
       this.invalidateCache();
